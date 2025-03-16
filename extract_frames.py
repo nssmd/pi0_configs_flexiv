@@ -1,66 +1,70 @@
-import cv2
-import os
-import argparse
+#!/usr/bin/env python
 
-def extract_frames(video_path, output_folder, prefix='frame'):
-    """
-    Extract frames from a video file and save them as images.
+# 设置使用第三张GPU
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"  # 
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.9"  
+print(f"使用GPU: {os.environ['CUDA_VISIBLE_DEVICES']}")
+print(f"JAX内存限制: {os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION']}")
+
+import numpy as np
+from openpi.training import config
+from openpi.policies import policy_config
+from openpi.policies.flexiv_policy import make_flexiv_example
+
+# 设置检查点路径
+CONFIG_NAME = "pi0_flexiv_low_mem_finetune"
+CHECKPOINT_DIR = "/home/lenovo/zimo/pi0/openpi/checkpoints/pi0_flexiv_low_mem_finetune/flexiv_experiment/2000"
+
+def main():
+    print(f"加载配置: {CONFIG_NAME}")
+    print(f"检查点路径: {CHECKPOINT_DIR}")
     
-    Args:
-        video_path (str): Path to the video file
-        output_folder (str): Path to the folder where frames will be saved
-        prefix (str): Prefix for the frame filenames
-    """
-    # Create output folder if it doesn't exist
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
+    # 加载配置
+    train_config = config.get_config(CONFIG_NAME)
     
-    # Open the video file
-    video = cv2.VideoCapture(video_path)
+    # 打印配置信息
+    print("\n配置信息:")
+    print(f"模型类型: {train_config.model.__class__.__name__}")
+    print(f"动作维度 (action_dim): {train_config.model.action_dim}")
+    print(f"动作序列长度 (action_horizon): {train_config.model.action_horizon}")
     
-    # Check if video opened successfully
-    if not video.isOpened():
-        print(f"Error: Could not open video file {video_path}")
-        return
+    # 创建策略
+    print("\n创建策略...")
+    policy = policy_config.create_trained_policy(train_config, CHECKPOINT_DIR)
     
-    # Get video properties
-    fps = video.get(cv2.CAP_PROP_FPS)
-    frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+    # 创建测试输入
+    print("\n创建测试输入...")
+    example = make_flexiv_example()
     
-    print(f"Video FPS: {fps}")
-    print(f"Total frames: {frame_count}")
+    # 打印输入信息
+    print(f"输入状态形状: {example['observation/state'].shape}")
+    print(f"输入图像形状: {example['observation/image'].shape}")
+    print(f"输入手腕图像形状: {example['observation/wrist_image'].shape}")
+    print(f"输入提示: {example['prompt']}")
     
-    # Read and save frames
-    frame_index = 0
-    success = True
+    # 运行推理
+    print("\n运行推理...")
+    result = policy.infer(example)
     
-    while success:
-        # Read next frame
-        success, frame = video.read()
+    # 打印输出信息
+    print("\n推理结果:")
+    if "actions" in result:
+        actions = result["actions"]
+        print(f"输出动作形状: {actions.shape}")
+        print(f"输出动作类型: {type(actions)}")
+        print(f"输出动作数据类型: {actions.dtype}")
+        print("\n输出动作内容:")
+        print(actions)
         
-        if success:
-            # Save frame as image
-            frame_filename = f"{prefix}_{frame_index:06d}.jpg"
-            frame_path = os.path.join(output_folder, frame_filename)
-            cv2.imwrite(frame_path, frame)
-            
-            # Print progress
-            if frame_index % 100 == 0:
-                print(f"Extracted frame {frame_index}/{frame_count}")
-            
-            frame_index += 1
-    
-    # Release video
-    video.release()
-    
-    print(f"Extraction complete. {frame_index} frames extracted to {output_folder}")
+        # 如果是二维数组，打印每个时间步的动作维度
+        if len(actions.shape) == 2:
+            print("\n每个时间步的动作:")
+            for i, action in enumerate(actions):
+                print(f"时间步 {i}: {action.shape} - {action}")
+    else:
+        print("结果中没有找到'actions'键")
+        print(f"可用的键: {list(result.keys())}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Extract frames from a video file")
-    parser.add_argument("video_path", help="Path to the video file")
-    parser.add_argument("output_folder", help="Path to the output folder")
-    parser.add_argument("--prefix", default="frame", help="Prefix for frame filenames")
-    
-    args = parser.parse_args()
-    
-    extract_frames(args.video_path, args.output_folder, args.prefix) 
+    main() 
